@@ -1,0 +1,293 @@
+---
+title: 'Analysis Serlo event log'
+output: 
+  bookdown::html_document2:
+    toc: TRUE
+    toc_float: TRUE
+runtime: shiny
+---
+This document provides a brief analysis of the serlo event-log and the editing-history on serlo.org.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("data_preprocessing.R")
+```
+
+# Fundamental remarks
+
+- We look at all edits recorded by the event log, beginning with 2015 and for authors beginning 2016.
+- We count as an edit the actions defined by [this document](https://docs.google.com/spreadsheets/d/1WoNiWyXJRckC1eNwed6et-7N02f2mlx9iMKF87F4f6I/edit#gid=1937612395) (last line). These are `"entity/link/remove", "entity/link/remove", "entity/revision/add", "entity/create".`
+- In the course of this analysis we use the term active author. An active author at time $t$ is someone, who had 10 or more edits some time in the last 90 days. 
+
+
+
+# Analysis of edit-count
+
+We start by looking at the edits per day, plotted since 2015:
+```{r}
+edits_per_day <- events %>% 
+  count(date) %>%
+  complete(date = full_seq(date, period = 1), fill = list(n = 0))
+
+ts_edits <- ts(edits_per_day$n, start= min(edits_per_day$date), frequency = 365.25)
+
+edits_per_day %>%
+  ggplot(aes(x=date, y=n)) + 
+  geom_line() + 
+  ggtitle("Edits per day")
+```
+
+We see that edits differ quite a lot in different days and there seems to be a continuous number of edits done, interrupted by some spikes, probably corresponding to redactional days, sprints,...
+
+The mean number of edits per day is `r mean(edits_per_day$n)` and a variance of `r sd(edits_per_day$n)`.
+
+One can look at a moving average for further analysis and a better view:
+
+```{r}
+
+ui <- fluidPage(
+    # Sidebar with a slider input for number of bins 
+    sidebarLayout(
+        sidebarPanel(
+            sliderInput("days",
+                        "Days",
+                        min = 1,
+                        max = 100,
+                        value = 31)
+        ),
+
+        # Show a plot of the generated distribution
+        mainPanel(
+           plotOutput("distPlot")
+        )
+    )
+)
+
+server <- function(input, output) {
+    output$distPlot <- renderPlot({
+        edits_per_day %>% mutate(roll_mean = rollmean(n, input$days, fill=NA)) %>%
+        drop_na(roll_mean) %>%
+        ggplot(aes(x=date, y=roll_mean)) + geom_line() + xlab("Date") + ylab("Number of edits with rolling mean")
+
+    })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+Interesting insights give moving average over a year and the one over a month with the different years in comparison:
+
+```{r}
+moving_average_365 <- edits_per_day %>% mutate(roll_mean = rollmean(n, 365, fill=NA)) %>% 
+  drop_na(roll_mean) %>%
+  ggplot(aes(x=date, y=roll_mean)) +
+  geom_line() + 
+  xlab("Date") + 
+  ylab("Mean edits") +
+  ggtitle("Number of edits with one year moving average")
+
+moving_average_comparison_31 <- edits_per_day %>% mutate(roll_mean = rollmean(n, 31, fill=NA)) %>%
+  drop_na(roll_mean) %>%
+  filter(year(date) > 2017) %>%
+  ggplot(aes(x=make_date(2025, month(date), day(date)), y=roll_mean, colour=factor(year(date)))) + 
+  geom_line() +
+  ylab("Mean edits") +
+  ggtitle("Number of edits with one month moving average") +
+  xlab("Month") 
+
+grid.arrange(moving_average_365, moving_average_comparison_31, ncol = 1, nrow = 2)
+
+edits_per_month <- events %>%
+  count(month=month(date), year=year(date))%>%
+  filter(year > 2017) %>%
+  ggplot(aes(x=month, y=n, colour=factor(year))) + 
+  geom_line() +
+  ggtitle("Edits per month") +
+  xlab("Month") +
+  scale_x_continuous(breaks=1:12)
+  
+
+edits_per_year <- events %>% 
+  count(year=year(date)) %>% 
+  ggplot(aes(x=year, y=n)) + 
+  geom_line() + 
+  ggtitle("Edits per year") + 
+  xlab("Year")
+
+
+grid.arrange(edits_per_month, edits_per_year, ncol = 1, nrow = 2)
+```
+
+We see here in the moving average, what also shows in the accumulated monthly and yearly edits, that there has been an upwards trend since 2016, with a really successful year 2018, a way weaker 2019 and recovery in the first months of 2020. One explanation for the success in 2018 may be the two Serlo-academies and the peaks in the monthly moving-average plots, as well as on slide 2 coincide with their dates. In the beginning of 2020 there seems to be Covid-effect with a massive growth in activities and then an adjustement again to the levels of other years.
+
+
+
+## 2.2 Author-analysis
+
+Now we come to the analysis of the authors that make edits. We only look at the time since 2016.
+```{r}
+events %<>% filter(year(date)>2015)
+```
+
+
+Active authors are authors having 10 or more edits in 90 days. Their evolution over time:
+
+```{r}
+active_authors_per_day <- cum_active_authors %>% group_by(date)  %>% summarize(n=n())
+active_authors_per_day %>% ggplot(aes(x=date, y=n)) + geom_line()
+```
+Some observations:
+
+- `r sum(cum_active_authors$n)/dim(events %>% filter(year(date)>2015))[1]`% of all edits since 2016 are made by authors while they are being active (having more than 9 edits in the last 90 days).
+```{r echo=FALSE}
+best_actors <- events %>% filter(year(date)>2015) %>% count(actor_id) %>% arrange(desc(n)) 
+```
+
+
+- The most active 20% of all authors are responsible for `r sum((best_actors %>% filter(n > quantile(n, .8)))$n)/dim(events %>% filter(year(date)>2015))[1]` % of all edits. The top 10% still for `r sum((best_actors %>% filter(n > quantile(n, .9)))$n)/dim(events %>% filter(year(date)>2015))[1]`% of all edits. That can also the case because there are many authors with only one edit.
+
+```{r echo=FALSE}
+best_active_authors <- cum_active_authors %>% group_by(actor_id) %>% summarise(sum = sum(n)) %>% arrange(desc(sum)) %>% filter(sum > quantile(sum, .8))
+```
+
+- But it shows, that the top 20% of active authors are also responsible for `r sum(best_active_authors$sum)/sum(cum_active_authors$n)` % of all edits made by active authors and for `r sum(best_active_authors$sum)/dim(events %>% filter(year(date)>2015))[1]`% of all edits.
+- This is also very stable during the different years.
+
+Looking at what active authors do while being active:
+
+```{r}
+#Events active authors did while being active
+events_by_active_authors <- events %>% inner_join(cum_active_authors, by=c("date", "actor_id")) 
+```
+
+In the time they are active authors usually have as many edits as they edit different content-objects. The ratio is:
+```{r}
+actor_uuid_ids <- events_by_active_authors %>% group_by(actor_id, uuid_id) %>% summarize(n=n()) %>% group_by(actor_id) %>% summarise(ratio = sum(n)/n())
+
+actor_uuid_ids %>%summarize(mean = mean(ratio))
+```
+
+Authors don't really tend to spend multiple edits on one content-object, but instead to edit a multiply of content. This is very homogeneous with a standard-deviation of `r sd(actor_uuid_ids$ratio)` and `r sum(actor_uuid_ids$ratio==1)/dim(actor_uuid_ids)[1]`% of authors for which this is exactly equal to 1. I look at the other ones. For them their edits are
+
+```{r}
+
+events %>% inner_join(events_by_active_authors %>% group_by(actor_id, uuid_id) %>% summarize(n=n()) %>% filter(n!=1), by=c("uuid_id", "actor_id")) %>% group_by(actor_id, uuid_id, date) %>% summarise(n=n()) 
+#uuids whete edits on one date, look how many with one, how many without
+
+```
+
+# Temporal analysis 
+
+We now switch to a mainly temporal analysis of author-activity. 
+```{r}
+active_authors_per_day %>% ggplot(aes(x=date, y=n)) +geom_line()
+```
+
+Interesting are also the sum of all edits of active authors in the last 90 days, as well as the mean edits of active authors in the last 90 days: 
+```{r echo=FALSE}
+total_edits <- cum_active_authors %>% 
+  group_by(date)  %>% 
+  summarize(number_of_edits = sum(cum_edits90days_rolling)) %>% 
+  ggplot(aes(x=date, y=number_of_edits, group=1)) +  
+  geom_line() + 
+  ggtitle("Total edits of active authors in the last 90 days")
+
+
+mean_edits <- cum_active_authors %>% 
+  group_by(date)  %>% 
+  summarize(mean_edits = mean(cum_edits90days_rolling)) %>% 
+  ggplot(aes(x=date, y=mean_edits, group=1)) + 
+  geom_line() + 
+  ggtitle("Mean edits active authors in the last 90 days")
+
+
+grid.arrange(total_edits, mean_edits, 
+             ncol = 1, nrow = 2)
+```
+
+Both being accumulations over 90 days seem relatively stable and without much "noise". We can also look at the mean number of authors in a 31 day moving average:
+
+```{r}
+author_moving_average_comparison_31 <- active_authors_per_day %>% mutate(roll_mean = rollmean(n, 31, fill=NA)) %>%
+  drop_na(roll_mean) %>%
+  ggplot(aes(x=make_date(2025, month(date), day(date)), y=roll_mean, colour=factor(year(date)))) + 
+  geom_line() +
+  ylab("Mean number of authors") +
+  ggtitle("Mean number of active authors with one month moving average") +
+  xlab("Month") 
+
+authors_moving_average_365 <- active_authors_per_day %>% mutate(roll_mean = rollmean(n, 365, fill=NA)) %>% 
+  drop_na(roll_mean) %>%
+  ggplot(aes(x=date, y=roll_mean)) +
+  geom_line() + 
+  xlab("Date") + 
+  ylab("Mean number of authors") +
+  ggtitle("Mean number of active authors with one year moving average")
+
+
+active_authors_per_month <- active_authors_per_day %>%
+  group_by(month = month(date),year= year(date)) %>%
+  summarize(mean=mean(n))  %>%
+  ggplot(aes(x=factor(month), y=mean, colour=factor(year))) +
+  geom_point() +
+  geom_line(aes(group = year)) +
+  ggtitle("Mean active authors per month") +
+  xlab("Date")
+  
+grid.arrange(author_moving_average_comparison_31, active_authors_per_month, ncol = 2, nrow = 1)
+authors_moving_average_365
+```
+
+One question we can ask is how long do active authors stay like this. First we look at the total elapsed time between the first and last edit:
+```{r}
+elapsed_time <- cum_active_authors %>% 
+  group_by(actor_id) %>% 
+  summarize(timespan=max(date)-min(date))
+
+elapsed_time %>% ggplot(aes(timespan)) + geom_density() + geom_vline(aes(xintercept=mean(timespan)),
+            color="blue", linetype="dashed", size=1)
+#überlegen ob gucken wieviele prozent über dem mean
+
+```
+
+At least `r dim(elapsed_time %>% filter(timespan > mean(timespan)))[1]/dim(elapsed_time)[1]` of all authors have a total time between first and last edit greater than the mean of `r mean(elapsed_time$timespan)`
+
+More interesting are the consecutive timespans in which an author stays as active author, so the time between first and last edit during which the author consecutively has an active status. That allows for values less than 90:
+
+```{r}
+
+consecutive_times <- cum_active_authors %>% group_by(actor_id, seq_id = cumsum(c(1, as.numeric(diff(date))) != 1)) %>% count(seq_id)
+
+consecutive_times %>% ggplot(aes(n)) + geom_density() + geom_vline(aes(xintercept=mean(n)),
+            color="blue", linetype="dashed", size=1)
+
+```
+
+The mean consecutive time is `r mean(consecutive_times$n)` with some people having an active status pretty much since the beginning of 2016. 
+
+Here are some more research questions possible: 
+- How many edits do authors do in their periods of activity (while being counted active)
+- Where do they edit? Merge with data about topic
+- If we make the notion of activity-phases exact that allows interesting modelling: having an author either as active or non-active and assuming a pseudo exponential for the time  we can look if the behavior is really that bursty and what correlates with longer activity-times/what we can do to promote them.
+
+### Smoothing of data and trends
+
+
+
+--> look what already done, add exponential smoothing and autocorrelation
+
+# Analysis of content
+```{r}
+edits_on_content <- events %>% group_by(uuid_id) %>% summarize(n=n()) %>% arrange(desc(n))
+```
+
+Since 2016 most content in the event log has been edited `r mean(edits_on_content$n)` times
+
+
+
+
+
+Interessante Fragen: 
+- welche sind die meist bearbeiteten Inhalte? Sind die identisch mit den meist beuschten? (GoogleAnalytics), durchschnittliche edits
+- wo arbeiten AUtor:innen, an wievielen Artikeln im Durschnitt, Varianz
+- wo fangen autor:innen an z uarbeiten, wo gehen sie hin? Gibt es "typische Wege"
