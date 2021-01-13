@@ -272,6 +272,84 @@ Here are some more research questions possible:
 
 ### Smoothing of data and trends
 
+We now come to a time-series analysis of the author-data. For that we convert the active authors per day to a R-time-series. 
+
+```{r}
+ts_authors <- ts(active_authors_per_day$n[45:length(active_authors_per_day$n)-45], start= active_authors_per_day$date[45], frequency = 365.25)
+plot.ts(ts_authors)
+```
+
+One easy way to get a "smoothing" is via a moving average:
+```{r}
+size <- length(ts_authors)
+pmfs <- data.frame(
+  type = c(replicate(size, "0"), replicate(size, "5"), replicate(size, "10"), replicate(size, "20"), replicate(size, "30")), 
+  values = c(ts_authors, SMA(ts_authors, n=5)+20, 
+   SMA(ts_authors, n=10)+40, SMA(ts_authors, n=20)+60, SMA(ts_authors, n=30)+80), x_values=c(1:size))
+
+
+ggplot(pmfs, aes(x= x_values, y=values, colour=type)) + geom_line() + xlab("Time") + ylab("Number of authors with rolling mean")
+```
+
+One natural choice here for KPIs, which we also looked at above is the one-month moving average, which seems to cancel out a lot of the noise. 
+
+```{r}
+ema5 <- data.frame(x=1:length(ts_authors), y= EMA(ts_authors, 5))
+ema10 <- data.frame(x=1:length(ts_authors), y= EMA(ts_authors, 10))
+ema5 <- ema5 %>% ggplot(aes(x,y)) + geom_line()
+ema10 <- ema10 %>% ggplot(aes(x,y)) + geom_line()
+grid.arrange(ema5, ema10, ncol = 2, nrow = 1)
+```
+
+Now important questions are trend and periodicity. There are unconclusive messages here. I use a box-Jenkins-approach and first try a detrending by just taking the daily differences: 
+```{r}
+ts_authors_diff = diff(ts_authors)
+plot(ts_authors_diff)
+```
+
+This appears stationary and the mean is also with `r mean(ts_authors_diff)` quite near to zero. I test the existence of a unit root with the Augmented Dickey–Fuller test. I get:
+```{r}
+adf.test(ts_authors_diff, alternative="stationary")
+```
+So we can reject the existence of a unit-root. the KPSS-test gives:
+```{r}
+kpss.test(ts_authors_diff)
+```
+Which is good. A first difference seems enough and this is what we also get by automated ndiffs in the forecast-package. We could try now fitting an ARMA-model. But still the autocorrelations is:
+```{r}
+plot(acf(ts_authors_diff, lag.max=365),  main="Autocorrelation up to one year")
+plot(acf(ts_authors_diff, lag.max=length(ts_authors_diff)), main="Total autocorrelation")
+```
+
+There seems to be a very slow decay, indicating non-stationarity. We could try testing for seasonality here, but maybe the differences are wrong. Also there seems to indicate no apparent seasonality or only a very weak one. 
+If we use a KPSS-test on the original data we can reject trend-stationarity:
+```{r}
+kpss.test(ts_authors, null="Trend")
+```
+
+Thats also what shows in the plot of residuals. 
+```{r}
+plot(lm(coredata(ts_authors) ~ index(ts_authors))$resid)
+```
+
+
+Further we can use a standard R-decomposition:
+```{r}
+plot(decompose(ts_authors))
+```
+
+I will try testing here the significance of the isolated seasonal component. 
+This seems to indicate a trend and seasonality-components, but gives no indication of significance. 
+Ideas:
+- look a moving min
+- further statistical tests
+One important question is the one of periodicity. For that we can look at the autocorrelation: the correlation of the series with a delayed copy of itself, as a function of a lag. We have: 
+
+There seems to be maybe a plateau after 0.4. We can plot that:
+```{r}
+plot.ts(ts_authors)
+lines(stats::lag(ts_authors, ceiling(0.4*365.25)))
+```
 
 
 --> look what already done, add exponential smoothing and autocorrelation

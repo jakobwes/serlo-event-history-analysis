@@ -11,6 +11,8 @@ library(TTR)
 library(dynlm)
 library(forecast)
 library(shiny)
+library(tseries)
+library(urca)
 
 
 event_file <- "events.csv"
